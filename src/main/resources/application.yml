@@ -1,0 +1,9 @@
+server:
+  port: 8080
+
+ratelimiter:
+  redis:
+    host: localhost
+    port: 6379
+  capacity: 5            # max burst: 5 requests allowed at once
+  refill-per-second: 1   # then 1 new request allowed per second

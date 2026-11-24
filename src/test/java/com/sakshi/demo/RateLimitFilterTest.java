@@ -18,9 +18,19 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class RateLimitFilterTest {
 
+    /** A registry with one rule covering /api/**, backed by the given fake limiter. */
+    private static RateLimitFilter filterWith(RateLimiter limiter, long retryAfterSeconds) {
+        RateLimitRule rule = new RateLimitRule();
+        rule.setName("test-rule");
+        rule.setPath("/api/**");
+        RateLimitRegistry registry = new RateLimitRegistry(
+                List.of(new RateLimitRegistry.Entry(rule, limiter, retryAfterSeconds)));
+        return new RateLimitFilter(registry);
+    }
+
     @Test
     void allowedRequestContinuesDownTheChain() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter(key -> true, 1);
+        RateLimitFilter filter = filterWith(key -> true, 1);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/hello");
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -33,7 +43,7 @@ class RateLimitFilterTest {
 
     @Test
     void rejectedRequestGets429AndNeverReachesTheController() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter(key -> false, 3);
+        RateLimitFilter filter = filterWith(key -> false, 3);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/hello");
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -43,13 +53,14 @@ class RateLimitFilterTest {
         assertNull(chain.getRequest(), "controller must NOT be reached");
         assertEquals(429, response.getStatus());
         assertEquals("3", response.getHeader("Retry-After"));
+        assertEquals("test-rule", response.getHeader("X-RateLimit-Rule"));
         assertTrue(response.getContentAsString().contains("rate_limited"));
     }
 
     @Test
-    void nonApiPathsAreNotRateLimited() throws Exception {
-        // A limiter that rejects everything: /health must still get through.
-        RateLimitFilter filter = new RateLimitFilter(key -> false, 1);
+    void pathsWithNoMatchingRuleAreNotRateLimited() throws Exception {
+        // A limiter that rejects everything: /health matches no rule, so it must still get through.
+        RateLimitFilter filter = filterWith(key -> false, 1);
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/health");
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -61,13 +72,39 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void eachRouteIsJudgedByItsOwnRule() throws Exception {
+        RateLimitRule strict = new RateLimitRule();
+        strict.setName("strict");
+        strict.setPath("/api/report");
+        RateLimitRule relaxed = new RateLimitRule();
+        relaxed.setName("relaxed");
+        relaxed.setPath("/api/**");
+
+        RateLimitFilter filter = new RateLimitFilter(new RateLimitRegistry(List.of(
+                new RateLimitRegistry.Entry(strict, key -> false, 15),   // rejects everything
+                new RateLimitRegistry.Entry(relaxed, key -> true, 1)))); // allows everything
+
+        MockHttpServletResponse reportResponse = new MockHttpServletResponse();
+        MockFilterChain reportChain = new MockFilterChain();
+        filter.doFilter(new MockHttpServletRequest("GET", "/api/report"), reportResponse, reportChain);
+        assertEquals(429, reportResponse.getStatus());
+        assertEquals("15", reportResponse.getHeader("Retry-After"));
+        assertNull(reportChain.getRequest());
+
+        MockHttpServletResponse helloResponse = new MockHttpServletResponse();
+        MockFilterChain helloChain = new MockFilterChain();
+        filter.doFilter(new MockHttpServletRequest("GET", "/api/hello"), helloResponse, helloChain);
+        assertEquals(200, helloResponse.getStatus());
+        assertNotNull(helloChain.getRequest());
+    }
+
+    @Test
     void clientsAreIdentifiedByApiKeyWhenPresent() throws Exception {
         List<String> seenKeys = new ArrayList<>();
-        RateLimiter recording = key -> {
+        RateLimitFilter filter = filterWith(key -> {
             seenKeys.add(key);
             return true;
-        };
-        RateLimitFilter filter = new RateLimitFilter(recording, 1);
+        }, 1);
 
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/hello");
         request.addHeader("X-API-Key", "abc123");
@@ -80,11 +117,10 @@ class RateLimitFilterTest {
     @Test
     void clientsFallBackToIpWhenNoApiKey() throws Exception {
         List<String> seenKeys = new ArrayList<>();
-        RateLimiter recording = key -> {
+        RateLimitFilter filter = filterWith(key -> {
             seenKeys.add(key);
             return true;
-        };
-        RateLimitFilter filter = new RateLimitFilter(recording, 1);
+        }, 1);
 
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/hello");
         request.setRemoteAddr("10.0.0.9");
@@ -96,11 +132,10 @@ class RateLimitFilterTest {
     @Test
     void spoofedForwardedForHeaderDoesNotChangeTheClientKey() throws Exception {
         List<String> seenKeys = new ArrayList<>();
-        RateLimiter recording = key -> {
+        RateLimitFilter filter = filterWith(key -> {
             seenKeys.add(key);
             return true;
-        };
-        RateLimitFilter filter = new RateLimitFilter(recording, 1);
+        }, 1);
 
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/hello");
         request.setRemoteAddr("10.0.0.9");

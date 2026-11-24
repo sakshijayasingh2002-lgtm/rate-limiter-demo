@@ -1,6 +1,5 @@
 package com.sakshi.demo;
 
-import com.sakshi.ratelimiter.core.RateLimiter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -8,47 +7,48 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Optional;
 
 /**
- * Runs before every /api/** request. Asks the rate limiter whether this
- * client may proceed; if not, answers 429 Too Many Requests right here and
- * the controller is never reached.
+ * Runs before every request. Looks up which rule (if any) covers the request
+ * path, asks that rule's limiter whether this client may proceed, and answers
+ * 429 Too Many Requests right here if not, so the controller is never reached.
  *
- * Note this class only knows the RateLimiter interface. It has no idea
- * whether Token Bucket, Sliding Window or Leaky Bucket is behind it, or
- * whether state lives in memory or Redis.
+ * It only knows the RateLimiter interface (through the registry), so it has
+ * no idea which algorithm a rule uses. Paths with no matching rule, like
+ * /health, pass straight through.
  */
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final String API_KEY_HEADER = "X-API-Key";
 
-    private final RateLimiter rateLimiter;
-    private final long retryAfterSeconds;
+    private final RateLimitRegistry registry;
 
-    public RateLimitFilter(RateLimiter rateLimiter, long retryAfterSeconds) {
-        this.rateLimiter = rateLimiter;
-        this.retryAfterSeconds = retryAfterSeconds;
-    }
-
-    /** Only /api/** is rate-limited. Things like /health stay open. */
-    @Override
-    protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+    public RateLimitFilter(RateLimitRegistry registry) {
+        this.registry = registry;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
+        Optional<RateLimitRegistry.Entry> match = registry.find(request.getRequestURI());
+        if (match.isEmpty()) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        RateLimitRegistry.Entry entry = match.get();
         String clientKey = resolveClientKey(request);
 
-        if (rateLimiter.allowRequest(clientKey)) {
+        if (entry.limiter().allowRequest(clientKey)) {
             chain.doFilter(request, response);
             return;
         }
 
         response.setStatus(429);
-        response.setHeader("Retry-After", String.valueOf(retryAfterSeconds));
+        response.setHeader("Retry-After", String.valueOf(entry.retryAfterSeconds()));
+        response.setHeader("X-RateLimit-Rule", entry.rule().getName());
         response.setContentType("application/json");
         response.getWriter().write("{\"error\":\"rate_limited\",\"message\":\"Too many requests, slow down.\"}");
     }

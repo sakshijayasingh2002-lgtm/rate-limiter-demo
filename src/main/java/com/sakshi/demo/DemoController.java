@@ -12,10 +12,14 @@ import java.util.Map;
 @RestController
 public class DemoController {
 
-    private final int port;
+    private final String instanceName;
 
-    public DemoController(@Value("${server.port}") int port) {
-        this.port = port;
+    /**
+     * Names this instance in responses ("servedBy"). Docker Compose sets INSTANCE_NAME
+     * for each container; running locally it falls back to "instance-<port>".
+     */
+    public DemoController(@Value("${instance.name:instance-${server.port}}") String instanceName) {
+        this.instanceName = instanceName;
     }
 
     /** Token Bucket rule: allows a small burst, then a steady trickle. */
@@ -23,7 +27,7 @@ public class DemoController {
     public Map<String, Object> hello() {
         return Map.of(
                 "message", "Hello!",
-                "servedBy", port,
+                "servedBy", instanceName,
                 "time", Instant.now().toString());
     }
 
@@ -33,7 +37,7 @@ public class DemoController {
         return Map.of(
                 "query", q,
                 "results", List.of(),
-                "servedBy", port);
+                "servedBy", instanceName);
     }
 
     /** Leaky Bucket rule: smooths traffic to a steady rate. */
@@ -41,7 +45,7 @@ public class DemoController {
     public Map<String, Object> orders() {
         return Map.of(
                 "orders", List.of(),
-                "servedBy", port);
+                "servedBy", instanceName);
     }
 
     /** Sliding Window Log rule: strict, exact count. Good for expensive operations. */
@@ -49,7 +53,7 @@ public class DemoController {
     public Map<String, Object> report() {
         return Map.of(
                 "report", "expensive report generated",
-                "servedBy", port,
+                "servedBy", instanceName,
                 "time", Instant.now().toString());
     }
 

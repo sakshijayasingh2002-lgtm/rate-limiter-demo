@@ -49,6 +49,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         response.setStatus(429);
         response.setHeader("Retry-After", String.valueOf(entry.retryAfterSeconds()));
         response.setHeader("X-RateLimit-Rule", entry.rule().getName());
+        response.setCharacterEncoding("UTF-8");
         response.setContentType("application/json");
         response.getWriter().write("{\"error\":\"rate_limited\",\"message\":\"Too many requests, slow down.\"}");
     }

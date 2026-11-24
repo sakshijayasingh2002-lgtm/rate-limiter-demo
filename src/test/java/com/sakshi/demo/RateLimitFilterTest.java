@@ -55,6 +55,7 @@ class RateLimitFilterTest {
         assertEquals("3", response.getHeader("Retry-After"));
         assertEquals("test-rule", response.getHeader("X-RateLimit-Rule"));
         assertTrue(response.getContentAsString().contains("rate_limited"));
+        assertEquals("UTF-8", response.getCharacterEncoding(), "JSON should be sent as UTF-8");
     }
 
     @Test

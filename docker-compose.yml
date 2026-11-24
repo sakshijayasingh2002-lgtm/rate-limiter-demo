@@ -1,0 +1,49 @@
+# One Redis + three copies of the demo service, all sharing that Redis.
+#
+#   app1 -> http://localhost:8081
+#   app2 -> http://localhost:8082
+#   app3 -> http://localhost:8083
+#
+# Redis has no published port: only the three apps (on the compose network) can reach it.
+
+services:
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  app1:
+    build: .
+    environment:
+      RATELIMITER_REDIS_HOST: redis   # the service name above is the hostname inside the compose network
+      INSTANCE_NAME: app1
+    ports:
+      - "8081:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  app2:
+    build: .
+    environment:
+      RATELIMITER_REDIS_HOST: redis
+      INSTANCE_NAME: app2
+    ports:
+      - "8082:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  app3:
+    build: .
+    environment:
+      RATELIMITER_REDIS_HOST: redis
+      INSTANCE_NAME: app3
+    ports:
+      - "8083:8080"
+    depends_on:
+      redis:
+        condition: service_healthy

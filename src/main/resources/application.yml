@@ -12,7 +12,7 @@ ratelimiter:
     - name: hello
       path: /api/hello
       algorithm: token-bucket
-      capacity: 2              # burst of 5...
+      capacity: 5              # burst of 5...
       refill-per-second: 1     # ...then 1 request per second
 
     - name: search
